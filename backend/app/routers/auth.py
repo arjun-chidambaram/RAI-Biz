@@ -32,7 +32,8 @@ def get_current_user(
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """
-    Extracts session token from HttpOnly cookie or Authorization Bearer header.
+    Extracts session token from HttpOnly cookie, Authorization Bearer header,
+    or fallback query parameter (for direct PDF report downloads/file links).
     Returns authenticated active User or None.
     """
     token = request.cookies.get(settings.SESSION_COOKIE_NAME)
@@ -41,6 +42,10 @@ def get_current_user(
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
+
+    if not token:
+        # Check query parameter (e.g. for direct PDF download links in new browser tabs)
+        token = request.query_params.get("token")
 
     if not token:
         return None

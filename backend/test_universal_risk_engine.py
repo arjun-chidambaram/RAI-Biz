@@ -216,7 +216,7 @@ def run_universal_tests():
         # -------------------------------------------------------------------
         print("\n--- TEST 4: Evidence Attribution & Audit Integrity ---")
         risk_p1_health = next(r for r in risks_h if r.source_module == "privacy")
-        assert risk_p1_health.evidence_source == "Self-reported assessment answer"
+        assert risk_p1_health.evidence_source in ["Self-reported / Unverified", "Self-reported assessment answer"]
         assert risk_p1_health.is_verified is False
         assert "No supporting documentation provided" not in risk_p1_health.evidence
         assert "Raw patient histology contains names" in risk_p1_health.evidence

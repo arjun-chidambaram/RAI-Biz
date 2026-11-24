@@ -78,6 +78,25 @@ app.add_middleware(
 # Mount authentication router
 app.include_router(auth_router)
 
+# Health check endpoints for deployment monitoring
+@app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
+def health_check(db: Session = Depends(get_db)):
+    db_status = "connected"
+    try:
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+    except Exception:
+        db_status = "error"
+    return {
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "service": "RAI-Biz API",
+        "version": "1.0.0",
+        "environment": settings.ENVIRONMENT,
+        "database": db_status,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+
 @app.on_event("startup")
 def startup_event():
     # Ensure upload & data directories exist
@@ -1055,3 +1074,13 @@ if (dist_dir / "index.html").exists():
         if target_file.is_file():
             return FileResponse(str(target_file))
         return FileResponse(str(dist_dir / "index.html"))
+else:
+    @app.get("/", tags=["Root"])
+    async def serve_api_welcome():
+        return {
+            "message": "Welcome to RAI-Biz Responsible AI Governance API",
+            "docs": "/docs",
+            "health": "/health",
+            "status": "operational",
+            "version": "1.0.0"
+        }

@@ -606,7 +606,20 @@ export const api = {
 
   // PDF Report
   getPdfReportUrl: (assessmentId: number): string => {
-    return `${API_BASE}/reports/${assessmentId}`;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('rai_biz_auth_token') : null;
+    return token
+      ? `${API_BASE}/reports/${assessmentId}?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/reports/${assessmentId}`;
+  },
+
+  // Interactive Swagger Docs URL resolver
+  getDocsUrl: (): string => {
+    const rawBase = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '') || '';
+    if (rawBase) {
+      const root = rawBase.replace(/\/api$/, '');
+      return `${root}/docs`;
+    }
+    return 'http://127.0.0.1:8000/docs';
   },
 
   // Demo Seeder

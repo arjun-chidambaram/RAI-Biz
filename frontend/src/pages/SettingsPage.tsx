@@ -116,7 +116,7 @@ export const SettingsPage: React.FC = () => {
               <span>FastAPI Documentation</span>
             </span>
             <p className="text-slate-600 text-[11px] leading-relaxed">
-              Interactive OpenAPI documentation available at <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" className="text-teal-700 font-bold underline">/docs</a> with auto-generated schema validation.
+              Interactive OpenAPI documentation available at <a href={api.getDocsUrl()} target="_blank" rel="noreferrer" className="text-teal-700 font-bold underline">/docs</a> with auto-generated schema validation.
             </p>
           </div>
         </div>

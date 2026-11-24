@@ -380,18 +380,30 @@ class RiskScoringModel:
     @classmethod
     def calculate(
         cls,
-        question_ref: str,
-        dimension: str,
-        context: BusinessContext,
-        answer: str,
-        notes: str = ""
+        question_ref: str = "",
+        dimension: str = "",
+        context: Optional[BusinessContext] = None,
+        answer: str = "No",
+        notes: str = "",
+        base_likelihood: Optional[str] = None,
+        base_impact: Optional[str] = None
     ) -> Tuple[str, float, str, str, str, str, str]:
         """
         Calculates:
         (severity, score, likelihood_label, impact_label, exposure_label, control_label, explanation)
         """
+        if context is None:
+            context = BusinessContext()
+
         # 1. Likelihood Factor (1.0 - 5.0)
-        if answer == "No":
+        if base_likelihood:
+            l_map = {"Low": 1.0, "Medium": 2.5, "High": 4.0, "Critical": 4.8}
+            l_num = l_map.get(base_likelihood, 3.0)
+            l_label = base_likelihood
+            if context.is_unassisted and context.is_high_impact and base_likelihood in ["High", "Critical"]:
+                l_num = 4.8
+                l_label = "Critical"
+        elif answer == "No":
             l_num = 4.0
             l_label = "High"
             # Elevate if completely unassisted and high-impact
@@ -421,7 +433,11 @@ class RiskScoringModel:
             "Sensitive PII / Special Category" if context.has_sensitive_data else "General / Not Specified"
         )
         
-        if dimension == "privacy":
+        if base_impact:
+            i_map = {"Low": 1.5, "Medium": 2.8, "High": 4.0, "Critical": 4.8}
+            i_num = i_map.get(base_impact, 3.0)
+            i_label = base_impact
+        elif dimension == "privacy":
             # P1: PII Minimization, P4: Encryption, P3: Data Retention, P2: Access Control, P5: Third-party
             if context.has_sensitive_data:
                 # Sensitive medical, financial, candidate, or personal data
@@ -570,9 +586,10 @@ class RiskScoringModel:
             severity = "Low"
 
         # 7. Auditable Explanation
+        impact_source_desc = f"question {question_ref}" if question_ref else f"baseline {base_impact or 'metric'}"
         explanation = (
             f"Evaluated via Likelihood={l_label} ({l_num:.1f}), "
-            f"Impact={i_label} ({i_num:.1f}, derived from question {question_ref}, data sensitivity '{data_summary}', and decision impact '{context.automated_decision_impact}'), "
+            f"Impact={i_label} ({i_num:.1f}, derived from {impact_source_desc}, data sensitivity '{data_summary}', and decision impact '{context.automated_decision_impact}'), "
             f"Exposure={exp_label} ({exp_num:.2f}, cohort: '{context.stakeholder_description}'), and "
             f"Control Effectiveness={c_label} ({c_num:.2f}, oversight tier '{context.human_oversight}'). "
             f"Yields composite risk index {composite_score}/100 -> Severity: {severity}. (Internal SME governance index; not statutory certification)."

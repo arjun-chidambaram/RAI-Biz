@@ -231,7 +231,7 @@ export const Layout: React.FC = () => {
 
             {/* API Docs Link */}
             <a
-              href="http://127.0.0.1:8000/docs"
+              href={api.getDocsUrl()}
               target="_blank"
               rel="noreferrer"
               className="p-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition"
