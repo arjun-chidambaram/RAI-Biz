@@ -1,6 +1,11 @@
 // API client for RAI-Biz backend with Session & CSRF Support
 
-const API_BASE = '/api';
+// Normalize API base URL from Vite environment variable (e.g. VITE_API_URL=https://rai-biz.onrender.com)
+// Ensures /api is neither omitted nor duplicated, with safe fallback to '/api' for local dev proxy
+const rawBase = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '') || '';
+const API_BASE = rawBase
+  ? (rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`)
+  : '/api';
 
 export interface User {
   id: number;
