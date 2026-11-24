@@ -161,6 +161,12 @@ def run_tests():
 
         print("\nALL VERIFICATION TESTS COMPLETED SUCCESSFULLY!")
     finally:
+        if 'saved_assessment' in locals() and saved_assessment:
+            db.query(AssessmentResponse).filter(AssessmentResponse.assessment_id == saved_assessment.id).delete()
+            db.query(Risk).filter(Risk.assessment_id == saved_assessment.id).delete()
+            db.query(Recommendation).filter(Recommendation.assessment_id == saved_assessment.id).delete()
+            db.query(Assessment).filter(Assessment.id == saved_assessment.id).delete()
+            db.commit()
         db.close()
 
 if __name__ == "__main__":
