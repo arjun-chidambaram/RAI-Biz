@@ -97,6 +97,7 @@ class AuthStatusResponse(BaseModel):
     business: Optional[BusinessResponse] = None
     application: Optional[AIApplicationResponse] = None
     csrf_token: Optional[str] = None
+    token: Optional[str] = None
     message: Optional[str] = None
 
 class ProfileUpdateResponse(BaseModel):

@@ -343,16 +343,35 @@ def generate_assessment_questions_endpoint(
     current_user: User = Depends(require_current_user),
     db: Session = Depends(get_db)
 ):
-    verify_application_access(current_user, req.application_id, db, include_demo=True)
-    app_obj = db.query(AIApplication).filter(AIApplication.id == req.application_id).first()
+    target_app_id = req.application_id
+    app_obj = None
+
+    if target_app_id:
+        verify_application_access(current_user, target_app_id, db, include_demo=True)
+        app_obj = db.query(AIApplication).filter(AIApplication.id == target_app_id).first()
+    else:
+        # Fall back to user's primary active AI application
+        app_obj = get_user_primary_application(db, current_user.id)
+        if not app_obj:
+            user_primary_biz = get_user_primary_business(db, current_user.id)
+            if user_primary_biz:
+                app_obj = db.query(AIApplication).filter(AIApplication.business_id == user_primary_biz.id).order_by(AIApplication.id.desc()).first()
+
     if not app_obj:
-        raise HTTPException(status_code=404, detail="AI Application not found")
+        raise HTTPException(status_code=404, detail="AI Application not found for this user account.")
+
     biz_obj = db.query(Business).filter(Business.id == app_obj.business_id).first()
     if not biz_obj:
-        raise HTTPException(status_code=404, detail="Business profile not found")
+        raise HTTPException(status_code=404, detail="Business profile not found for this AI application.")
 
-    questions = generate_industry_assessment(biz_obj, app_obj, force_llm=req.force_llm)
+    try:
+        questions = generate_industry_assessment(biz_obj, app_obj, force_llm=bool(req.force_llm))
+    except Exception as e:
+        # Failsafe fallback to standard catalog
+        questions = get_questions(business=biz_obj, application=app_obj)
+
     ind_key = detect_industry_key(biz_obj.industry, app_obj.business_function)
+    gen_source = "gemini_llm" if (req.force_llm and bool(settings.GEMINI_API_KEY)) else "curated_domain_engine"
 
     return DynamicQuestionSetResponse(
         business_id=biz_obj.id,
@@ -361,7 +380,7 @@ def generate_assessment_questions_endpoint(
         application_name=app_obj.name,
         industry=biz_obj.industry or "General SME",
         industry_key=ind_key,
-        generation_source="gemini_llm" if req.force_llm else "curated_domain_engine",
+        generation_source=gen_source,
         dimensions=["fairness", "transparency", "privacy", "sustainability"],
         question_count=len(questions),
         questions=questions

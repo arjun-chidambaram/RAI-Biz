@@ -1405,15 +1405,26 @@ def generate_industry_assessment(
     is_high_impact = (application.automated_decision_impact or "").lower() == "high"
     is_unassisted = (application.human_oversight or "").lower() == "none"
 
+    def _safe_format(template_str: str, context: dict) -> str:
+        if not template_str:
+            return ""
+        try:
+            return template_str.format(**context)
+        except Exception:
+            res = str(template_str)
+            for k, v in context.items():
+                res = res.replace(f"{{{k}}}", str(v))
+            return res
+
     for cat_id, cat_title in dimension_map:
         cat_templates = bank.get(cat_id, [])
         for t in cat_templates:
-            # Interpolate application specific metadata into templates
-            q_text = t["question_text"].format(**ctx)
-            guidance = t["guidance"].format(**ctx)
-            why_it_matters = t["why_it_matters"].format(**ctx)
-            evidence = t.get("evidence_required", "").format(**ctx)
-            rec = t.get("recommendation", "").format(**ctx)
+            # Interpolate application specific metadata into templates safely
+            q_text = _safe_format(t.get("question_text", ""), ctx)
+            guidance = _safe_format(t.get("guidance", ""), ctx)
+            why_it_matters = _safe_format(t.get("why_it_matters", ""), ctx)
+            evidence = _safe_format(t.get("evidence_required", ""), ctx)
+            rec = _safe_format(t.get("recommendation", ""), ctx)
             sev = t.get("risk_severity", "High")
 
             # Dynamic risk severity adjustment based on operational profile

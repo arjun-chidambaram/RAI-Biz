@@ -150,8 +150,10 @@ def verify_otp_endpoint(
     if not success or not user or not session_token:
         raise HTTPException(status_code=400, detail=message)
 
-    # Secure cookie configuration
+    # Secure cookie configuration supporting both local dev and cross-site production deployments (e.g. Vercel -> Render)
     is_prod = settings.ENVIRONMENT.lower() == "production"
+    is_secure = is_prod or request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    cookie_samesite = "none" if is_secure else "lax"
     max_age_seconds = settings.SESSION_MAX_AGE_DAYS * 86400
 
     # Set HttpOnly Session Cookie
@@ -161,8 +163,8 @@ def verify_otp_endpoint(
         max_age=max_age_seconds,
         expires=max_age_seconds,
         httponly=True,
-        samesite="lax",
-        secure=is_prod,
+        samesite=cookie_samesite,
+        secure=is_secure,
         path="/"
     )
 
@@ -173,8 +175,8 @@ def verify_otp_endpoint(
         max_age=max_age_seconds,
         expires=max_age_seconds,
         httponly=False,
-        samesite="lax",
-        secure=is_prod,
+        samesite=cookie_samesite,
+        secure=is_secure,
         path="/"
     )
 
@@ -187,6 +189,7 @@ def verify_otp_endpoint(
         business=BusinessResponse.from_orm(primary_biz) if primary_biz else None,
         application=AIApplicationResponse.from_orm(primary_app) if primary_app else None,
         csrf_token=csrf_token,
+        token=session_token,
         message=message
     )
 

@@ -72,10 +72,10 @@ export const AssessmentPage: React.FC = () => {
   };
 
   const handleRegenerateQuestions = async (forceLlm: boolean = false) => {
-    if (!application?.id) return;
     try {
       setRegenerating(true);
-      const res = await api.generateQuestions(application.id, forceLlm);
+      const targetAppId = application?.id;
+      const res = await api.generateQuestions(targetAppId, forceLlm);
       setQuestions(res.questions);
       setEngineSource(res.generation_source);
 
@@ -89,9 +89,10 @@ export const AssessmentPage: React.FC = () => {
         });
         return updated;
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to regenerate questions:", err);
-      alert("Could not regenerate questions. Check server logs.");
+      const msg = err?.message || "Check server logs.";
+      alert(`Could not regenerate questions: ${msg}`);
     } finally {
       setRegenerating(false);
     }

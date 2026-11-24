@@ -51,6 +51,7 @@ export interface AuthStatusResponse {
   business?: Business;
   application?: AIApplication;
   csrf_token?: string;
+  token?: string;
   message?: string;
 }
 
@@ -345,6 +346,12 @@ function getCsrfToken(): string | null {
 async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   
+  // Attach session Bearer token for resilient cross-domain requests
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('rai_biz_auth_token') : null;
+  if (storedToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${storedToken}`);
+  }
+
   // Attach CSRF token on mutation methods
   const method = (options.method || 'GET').toUpperCase();
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -389,11 +396,15 @@ export const api = {
   },
 
   verifyOtp: async (email: string, otp: string): Promise<AuthStatusResponse> => {
-    return apiFetch('/auth/verify-otp', {
+    const res = await apiFetch<AuthStatusResponse>('/auth/verify-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, otp })
     });
+    if (res.token && typeof window !== 'undefined') {
+      localStorage.setItem('rai_biz_auth_token', res.token);
+    }
+    return res;
   },
 
   resendOtp: async (email: string): Promise<{ success: boolean; message: string; email: string }> => {
@@ -409,9 +420,15 @@ export const api = {
   },
 
   logout: async (): Promise<{ success: boolean; message: string }> => {
-    return apiFetch('/auth/logout', {
-      method: 'POST'
-    });
+    try {
+      return await apiFetch('/auth/logout', {
+        method: 'POST'
+      });
+    } finally {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('rai_biz_auth_token');
+      }
+    }
   },
 
   // Business & Applications
@@ -452,7 +469,7 @@ export const api = {
     const url = appId ? `/assessments/questions?application_id=${appId}` : '/assessments/questions';
     return apiFetch(url);
   },
-  generateQuestions: async (appId: number, forceLlm?: boolean): Promise<DynamicQuestionSetResponse> => {
+  generateQuestions: async (appId?: number, forceLlm?: boolean): Promise<DynamicQuestionSetResponse> => {
     return apiFetch('/assessments/generate-questions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
