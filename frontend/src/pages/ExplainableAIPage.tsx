@@ -7,11 +7,13 @@ import {
   Info,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   User,
   ArrowRight,
   TrendingUp,
   Cpu,
-  Database
+  Database,
+  X
 } from 'lucide-react';
 import {
   BarChart,
@@ -29,11 +31,14 @@ export const ExplainableAIPage: React.FC = () => {
   const { application } = useAuth();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
+  const [targetAttribute, setTargetAttribute] = useState<string>('');
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [modelType, setModelType] = useState<string>('RandomForest');
   const [analyzing, setAnalyzing] = useState(false);
   const [results, setResults] = useState<XAIAnalysisResponse | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<SampleExplanation | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadDatasetsAndExplain();
@@ -42,31 +47,92 @@ export const ExplainableAIPage: React.FC = () => {
   const loadDatasetsAndExplain = async () => {
     try {
       setLoading(true);
+      setErrorMessage(null);
       const dsList = await api.getDatasets(application?.id);
       setDatasets(dsList);
       if (dsList.length > 0) {
-        setSelectedDatasetId(dsList[0].id);
-        await runExplainability(modelType, dsList[0].id);
+        const firstDs = dsList[0];
+        setSelectedDatasetId(firstDs.id);
+        
+        // Fetch columns for target selection
+        try {
+          const preview = await api.getDatasetPreview(firstDs.id);
+          setAvailableColumns(preview.columns);
+        } catch (e) {
+          console.error("Preview column fetch error", e);
+        }
+
+        if (firstDs.row_count < 4) {
+          setErrorMessage(
+            `Dataset "${firstDs.original_filename}" has only ${firstDs.row_count} record(s). A minimum of 4 records is required to perform ML train/test splitting and explainability analysis.`
+          );
+          setResults(null);
+        } else {
+          await runExplainability(modelType, firstDs.id, '');
+        }
       } else {
         setResults(null);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load datasets for XAI", err);
+      setErrorMessage(err.message || "Failed to load application datasets");
     } finally {
       setLoading(false);
     }
   };
 
-  const runExplainability = async (typeOverride?: string, dsIdOverride?: number) => {
+  const handleDatasetChange = async (newId: number) => {
+    setSelectedDatasetId(newId);
+    setErrorMessage(null);
+    const ds = datasets.find(d => d.id === newId);
+    
+    try {
+      const preview = await api.getDatasetPreview(newId);
+      setAvailableColumns(preview.columns);
+
+      let currentTarget = targetAttribute;
+      if (currentTarget && !preview.columns.includes(currentTarget)) {
+        currentTarget = '';
+        setTargetAttribute('');
+      }
+
+      if (ds && ds.row_count < 4) {
+        setErrorMessage(
+          `Dataset "${ds.original_filename}" has only ${ds.row_count} record(s). A minimum of 4 records is required to train and explain ML models. Please select a larger dataset or upload one in Dataset Manager.`
+        );
+        setResults(null);
+        return;
+      }
+
+      await runExplainability(modelType, newId, currentTarget);
+    } catch (err: any) {
+      console.error("Failed switching dataset for XAI", err);
+      setErrorMessage(err.message || "Failed to inspect selected dataset");
+    }
+  };
+
+  const runExplainability = async (typeOverride?: string, dsIdOverride?: number, targetOverride?: string) => {
     const type = typeOverride || modelType;
     const dsId = dsIdOverride || selectedDatasetId;
+    const target = targetOverride !== undefined ? targetOverride : targetAttribute;
     if (!application?.id && !dsId) return;
+
+    const ds = datasets.find(d => d.id === dsId);
+    if (ds && ds.row_count < 4) {
+      setErrorMessage(
+        `Dataset "${ds.original_filename}" has only ${ds.row_count} record(s). A minimum of 4 records is required to train and explain ML models. Please upload or select a dataset with at least 4 records.`
+      );
+      setResults(null);
+      return;
+    }
 
     try {
       setAnalyzing(true);
+      setErrorMessage(null);
       const res = await api.analyzeExplainability({
         application_id: application?.id || 1,
         dataset_id: dsId || undefined,
+        target_attribute: target || undefined,
         model_type: type
       });
       setResults(res);
@@ -74,12 +140,16 @@ export const ExplainableAIPage: React.FC = () => {
         setSelectedCandidate(res.sample_explanations[0]);
       }
     } catch (err: any) {
-      alert("Error training & explaining model: " + (err.message || "Failed"));
+      setErrorMessage(err.message || "Failed to train & explain model.");
+      setResults(null);
     } finally {
       setAnalyzing(false);
       setLoading(false);
     }
   };
+
+  const selectedDataset = datasets.find(d => d.id === selectedDatasetId);
+  const isDatasetTooSmall = Boolean(selectedDataset && selectedDataset.row_count < 4);
 
   const globalChartData = results?.global_importance.map((f) => ({
     name: f.feature,
@@ -105,21 +175,35 @@ export const ExplainableAIPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             {datasets.length > 0 && (
               <select
                 value={selectedDatasetId || ''}
-                onChange={(e) => {
-                  const newId = Number(e.target.value);
-                  setSelectedDatasetId(newId);
-                  runExplainability(modelType, newId);
-                }}
+                onChange={(e) => handleDatasetChange(Number(e.target.value))}
                 className="text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:outline-hidden font-medium"
               >
                 {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.original_filename} ({d.row_count} rows)
                   </option>
+                ))}
+              </select>
+            )}
+
+            {availableColumns.length > 0 && (
+              <select
+                value={targetAttribute}
+                onChange={(e) => {
+                  const newTarget = e.target.value;
+                  setTargetAttribute(newTarget);
+                  runExplainability(modelType, selectedDatasetId || undefined, newTarget);
+                }}
+                disabled={analyzing || isDatasetTooSmall}
+                className="text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:outline-hidden font-medium disabled:opacity-50"
+              >
+                <option value="">Target: Auto-Detect</option>
+                {availableColumns.map((col) => (
+                  <option key={col} value={col}>Target: {col}</option>
                 ))}
               </select>
             )}
@@ -131,7 +215,8 @@ export const ExplainableAIPage: React.FC = () => {
                 setModelType(newType);
                 runExplainability(newType);
               }}
-              className="text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:outline-hidden font-medium"
+              disabled={analyzing || isDatasetTooSmall}
+              className="text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:outline-hidden font-medium disabled:opacity-50"
             >
               <option value="RandomForest">Random Forest Classifier</option>
               <option value="GradientBoosting">Gradient Boosting Machine</option>
@@ -140,7 +225,8 @@ export const ExplainableAIPage: React.FC = () => {
 
             <button
               onClick={() => runExplainability()}
-              disabled={analyzing || datasets.length === 0}
+              disabled={analyzing || datasets.length === 0 || isDatasetTooSmall}
+              title={isDatasetTooSmall ? "Dataset has fewer than 4 records; minimum 4 records required." : undefined}
               className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-700 hover:to-sky-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-xs disabled:opacity-50"
             >
               <Cpu className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} />
@@ -173,6 +259,31 @@ export const ExplainableAIPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Actionable Error/Warning Banner */}
+      {errorMessage && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-900 p-4 rounded-2xl text-xs flex items-start justify-between shadow-xs">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block text-sm mb-1">Explainability Notice</span>
+              <p className="text-slate-700 leading-relaxed font-medium">{errorMessage}</p>
+              {isDatasetTooSmall && (
+                <p className="text-slate-500 mt-2 text-[11px]">
+                  Tip: Navigate to <b>Dataset Manager</b> to upload a training dataset with at least 4 records and a binary classification target column.
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="text-rose-400 hover:text-rose-600 p-1 rounded-lg transition"
+            aria-label="Dismiss alert"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {datasets.length === 0 && !loading && (
         <div className="bg-amber-50 border border-amber-200 text-amber-900 p-5 rounded-2xl text-xs flex items-start space-x-3">

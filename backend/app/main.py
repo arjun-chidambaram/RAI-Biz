@@ -753,23 +753,17 @@ def analyze_explainability_endpoint(
     df = pd.read_csv(file_path) if file_path.endswith(".csv") else pd.read_json(file_path)
 
     try:
-        # Determine target column dynamically
-        target_col = req.target_attribute or "selected"
-        if target_col not in df.columns:
-            for candidate in ["service_approved", "recommended_ceramic", "qualified", "selected", "outcome", "target", "label", "approved"]:
-                if candidate in df.columns:
-                    target_col = candidate
-                    break
-
         res = train_and_explain_model(
             df=df,
-            target_column=target_col,
+            target_column=req.target_attribute,
             model_type=req.model_type
         )
         record_explainability_findings(db, req.application_id, res)
         return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Model training and explainability error: {str(e)}")
 
 # ----------------- MODULE 4: PRIVACY GUARD -----------------
 @app.post("/api/privacy/scan", response_model=PrivacyScanResponse, tags=["Privacy"])
