@@ -180,45 +180,54 @@ def run_migration(
     print("\n[4/5] Migrating records in foreign key dependency order...")
     target_counts = {}
 
-    for tbl_name, model_cls in TABLE_MODEL_ORDER:
-        records = source_session.query(model_cls).all()
-        count = len(records)
-        print(f"  Migrating '{tbl_name}' ({count} rows)...", end="", flush=True)
+    try:
+        for tbl_name, model_cls in TABLE_MODEL_ORDER:
+            records = source_session.query(model_cls).all()
+            count = len(records)
+            print(f"  Migrating '{tbl_name}' ({count} rows)...", end="", flush=True)
 
-        if count == 0:
-            print(" (Empty - skipped)")
-            target_counts[tbl_name] = 0
-            continue
+            if count == 0:
+                print(" (Empty - skipped)")
+                target_counts[tbl_name] = 0
+                continue
 
-        # Extract column values into dicts to re-insert clean detached models
-        mapper = inspect(model_cls)
-        column_names = [col.key for col in mapper.attrs if hasattr(col, "columns")]
+            # Extract column values into dicts to re-insert clean detached models
+            mapper = inspect(model_cls)
+            column_names = [col.key for col in mapper.attrs if hasattr(col, "columns")]
 
-        valid_users = None
-        if tbl_name == "assessments":
-            valid_users = set(u.id for u in target_session.query(User).all())
+            valid_users = None
+            if tbl_name == "assessments":
+                valid_users = set(u.id for u in target_session.query(User).all())
 
-        migrated_objs = []
-        for rec in records:
-            row_data = {col: getattr(rec, col) for col in column_names}
-            # Foreign key protection: Assessment.user_id is nullable. In SQLite, Assessment #7
-            # referenced non-existent user_id=1. Sanitizing to None satisfies PostgreSQL FK constraints.
-            if tbl_name == "assessments" and valid_users is not None:
-                if row_data.get("user_id") is not None and row_data["user_id"] not in valid_users:
-                    row_data["user_id"] = None
-            new_obj = model_cls(**row_data)
-            migrated_objs.append(new_obj)
+            migrated_objs = []
+            for rec in records:
+                row_data = {col: getattr(rec, col) for col in column_names}
+                # Foreign key protection: Assessment.user_id is nullable. In SQLite, Assessment #7
+                # referenced non-existent user_id=1. Sanitizing to None satisfies PostgreSQL FK constraints.
+                if tbl_name == "assessments" and valid_users is not None:
+                    if row_data.get("user_id") is not None and row_data["user_id"] not in valid_users:
+                        row_data["user_id"] = None
+                new_obj = model_cls(**row_data)
+                migrated_objs.append(new_obj)
 
-        # Batch insert into target
-        for i in range(0, len(migrated_objs), batch_size):
-            chunk = migrated_objs[i : i + batch_size]
-            target_session.add_all(chunk)
-            target_session.flush()
+            # Batch insert into target
+            for i in range(0, len(migrated_objs), batch_size):
+                chunk = migrated_objs[i : i + batch_size]
+                target_session.add_all(chunk)
+                target_session.flush()
 
+            target_counts[tbl_name] = count
+            print(f" Staged ({count}/{count} rows)")
+
+        # Atomic commit: Commit all 17 tables in a single transaction
+        print("\n  Committing all 17 tables atomically to target database...")
         target_session.commit()
-        target_cnt = target_session.query(model_cls).count()
-        target_counts[tbl_name] = target_cnt
-        print(f" Done ({target_cnt}/{count} rows)")
+        print("  Transaction committed successfully.")
+    except Exception as e:
+        target_session.rollback()
+        print(f"\n[ROLLBACK] Migration failed during execution: {e}")
+        print("All pending changes have been rolled back. No partial records were committed.")
+        raise
 
     # 5. Synchronize PostgreSQL Sequences (setval)
     if target_engine.dialect.name == "postgresql":
@@ -275,16 +284,21 @@ def run_migration(
     }
 
 def resolve_target_url(explicit_url: str = None) -> str:
-    """Resolves target database URL from arguments, environment, gitignored file, or Windows registry."""
+    """Resolves target database URL from arguments, Windows registry, environment, or gitignored file."""
     if explicit_url and explicit_url.strip():
         return explicit_url.strip()
-    
-    # 1. Process environment variables
-    for k in ["TARGET_DATABASE_URL", "NEON_DATABASE_URL", "TEST_POSTGRESQL_URL"]:
-        v = os.getenv(k, "").strip()
-        if v and not v.startswith("sqlite"):
-            return v
-            
+
+    # 1. Windows User-level environment variables (fresh from registry)
+    if sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                val, _ = winreg.QueryValueEx(key, "TARGET_DATABASE_URL")
+                if val and val.strip():
+                    return val.strip()
+        except Exception:
+            pass
+
     # 2. Local gitignored test env files
     for candidate in [BASE_DIR / ".env.test.local", BASE_DIR / ".env.local"]:
         if candidate.exists():
@@ -296,17 +310,12 @@ def resolve_target_url(explicit_url: str = None) -> str:
                         if val:
                             return val
 
-    # 3. Windows User-level environment variables
-    if sys.platform == "win32":
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
-                val, _ = winreg.QueryValueEx(key, "TARGET_DATABASE_URL")
-                if val and val.strip():
-                    return val.strip()
-        except Exception:
-            pass
-            
+    # 3. Process environment variables
+    for k in ["TARGET_DATABASE_URL", "NEON_DATABASE_URL", "TEST_POSTGRESQL_URL"]:
+        v = os.getenv(k, "").strip()
+        if v and not v.startswith("sqlite"):
+            return v
+
     return ""
 
 def main():
