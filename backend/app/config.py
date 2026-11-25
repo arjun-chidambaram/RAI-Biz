@@ -20,9 +20,22 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     BASE_DIR: Path = BASE_DIR
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'rai_biz.db'}")
+    
+    # Customer Backup Database (Supabase) - Decoupled from Primary Neon Engine
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
+    SUPABASE_DATABASE_URL: str = os.getenv("SUPABASE_DATABASE_URL", "")
+    
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
     DATA_DIR: Path = BASE_DIR / "app" / "data"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    
+    @property
+    def normalized_database_url(self) -> str:
+        url = self.DATABASE_URL.strip()
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        return url
     
     # Auth & Security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "rai-biz-secret-key-super-secure-production-ready-2026")

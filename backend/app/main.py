@@ -83,9 +83,11 @@ app.include_router(auth_router)
 @app.get("/api/health", tags=["Health"])
 def health_check(db: Session = Depends(get_db)):
     db_status = "connected"
+    db_dialect = "unknown"
     try:
         from sqlalchemy import text
         db.execute(text("SELECT 1"))
+        db_dialect = db.bind.dialect.name
     except Exception:
         db_status = "error"
     return {
@@ -94,6 +96,7 @@ def health_check(db: Session = Depends(get_db)):
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT,
         "database": db_status,
+        "database_engine": db_dialect,
         "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
