@@ -137,6 +137,14 @@ def seed_demo_data(db: Session) -> Dict[str, Any]:
     csv_filename = "smarthire_recruitment_demo.csv"
     csv_path = settings.UPLOAD_DIR / csv_filename
     df_synthetic.to_csv(csv_path, index=False)
+    
+    # Also ensure bundled copy exists in settings.DATA_DIR
+    try:
+        data_path = settings.DATA_DIR / csv_filename
+        if not data_path.exists():
+            df_synthetic.to_csv(data_path, index=False)
+    except Exception:
+        pass
 
     import hashlib
     with open(csv_path, "rb") as f:
@@ -149,7 +157,7 @@ def seed_demo_data(db: Session) -> Dict[str, Any]:
             application_id=application.id,
             filename=csv_filename,
             original_filename="smarthire_recruitment_v1.csv",
-            file_path=str(csv_path),
+            file_path=f"uploads/{csv_filename}",
             file_size_bytes=len(file_bytes),
             row_count=len(df_synthetic),
             column_count=len(df_synthetic.columns),

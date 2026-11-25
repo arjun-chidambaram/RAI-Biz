@@ -37,6 +37,7 @@ from .services.xai_service import train_and_explain_model, record_explainability
 from .services.privacy_service import scan_dataframe_privacy, record_privacy_findings
 from .services.green_ai_service import calculate_sustainability_metrics, record_sustainability_findings, REGION_EMISSION_FACTORS
 from .services.dataset_service import save_and_ingest_dataset, get_dataset_preview, clean_dataset
+from .services.storage_service import load_dataset_dataframe, resolve_dataset_path, DatasetFileNotFoundError
 from .services.risk_service import get_risks, create_risk, update_risk
 from .services.risk_intelligence_engine import RiskIntelligenceEngine, UniversalRiskEngine
 from .services.recommendation_service import generate_and_save_recommendations
@@ -633,6 +634,8 @@ def dataset_preview_endpoint(
 
     try:
         return get_dataset_preview(db, id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -657,6 +660,8 @@ def clean_dataset_endpoint(
             fill_missing_categorical=req.fill_missing_categorical
         )
         return cleaned_ds
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -707,14 +712,12 @@ def analyze_fairness_endpoint(
                 status_code=400,
                 detail=f"Dataset '{ds.original_filename or ds.filename}' is not associated with this application."
             )
-        file_path = ds.file_path
     else:
         ds = db.query(Dataset).filter(Dataset.application_id == req.application_id).order_by(Dataset.id.desc()).first()
         if not ds:
             raise HTTPException(status_code=404, detail="No dataset found for this application")
-        file_path = ds.file_path
 
-    df = pd.read_csv(file_path) if file_path.endswith(".csv") else pd.read_json(file_path)
+    df = load_dataset_dataframe(ds)
 
     try:
         res = analyze_fairness(
@@ -725,6 +728,8 @@ def analyze_fairness_endpoint(
         )
         record_fairness_findings(db, req.application_id, res, ds.id)
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -746,14 +751,12 @@ def analyze_explainability_endpoint(
                 status_code=400,
                 detail=f"Dataset '{ds.original_filename or ds.filename}' is not associated with this application."
             )
-        file_path = ds.file_path
     else:
         ds = db.query(Dataset).filter(Dataset.application_id == req.application_id).order_by(Dataset.id.desc()).first()
         if not ds:
             raise HTTPException(status_code=404, detail="No dataset found for this application")
-        file_path = ds.file_path
 
-    df = pd.read_csv(file_path) if file_path.endswith(".csv") else pd.read_json(file_path)
+    df = load_dataset_dataframe(ds)
 
     try:
         res = train_and_explain_model(
@@ -763,6 +766,8 @@ def analyze_explainability_endpoint(
         )
         record_explainability_findings(db, req.application_id, res)
         return res
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -786,19 +791,19 @@ def scan_privacy_endpoint(
                 status_code=400,
                 detail=f"Dataset '{ds.original_filename or ds.filename}' is not associated with this application."
             )
-        file_path = ds.file_path
     else:
         ds = db.query(Dataset).filter(Dataset.application_id == req.application_id).order_by(Dataset.id.desc()).first()
         if not ds:
             raise HTTPException(status_code=404, detail="No dataset found for this application")
-        file_path = ds.file_path
 
-    df = pd.read_csv(file_path) if file_path.endswith(".csv") else pd.read_json(file_path)
+    df = load_dataset_dataframe(ds)
 
     try:
         res = scan_dataframe_privacy(df)
         record_privacy_findings(db, req.application_id, res, ds.id)
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

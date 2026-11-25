@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
     SUPABASE_DATABASE_URL: str = os.getenv("SUPABASE_DATABASE_URL", "")
     
-    UPLOAD_DIR: Path = BASE_DIR / "uploads"
-    DATA_DIR: Path = BASE_DIR / "app" / "data"
+    UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", str(BASE_DIR / "uploads")))
+    DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR / "app" / "data")))
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     
     @property
@@ -65,5 +65,12 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 settings = Settings()
-settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+
+try:
+    settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass

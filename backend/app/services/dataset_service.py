@@ -2,11 +2,19 @@ import os
 import hashlib
 import json
 from typing import Dict, Any, List, Optional, Tuple
+from fastapi import HTTPException
 import pandas as pd
 import numpy as np
 from sqlalchemy.orm import Session
 from ..models import Dataset, DatasetRecord, IngestionLog
 from ..config import settings
+from .storage_service import (
+    save_dataset_file,
+    load_dataset_dataframe,
+    get_storage_key,
+    extract_storage_basename,
+    DatasetFileNotFoundError
+)
 
 def calculate_checksum(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
@@ -19,11 +27,7 @@ def save_and_ingest_dataset(
 ) -> Dataset:
     """Saves file to uploads directory, parses metadata with pandas, and records in database."""
     checksum = calculate_checksum(file_bytes)
-    safe_name = f"{checksum[:12]}_{original_filename.replace(' ', '_')}"
-    target_path = settings.UPLOAD_DIR / safe_name
-
-    with open(target_path, "wb") as f:
-        f.write(file_bytes)
+    safe_name, storage_key, target_path = save_dataset_file(file_bytes, original_filename)
 
     # Load into pandas based on file extension
     ext = original_filename.lower().split(".")[-1]
@@ -46,7 +50,7 @@ def save_and_ingest_dataset(
         application_id=application_id,
         filename=safe_name,
         original_filename=original_filename,
-        file_path=str(target_path),
+        file_path=storage_key,
         file_size_bytes=len(file_bytes),
         row_count=row_count,
         column_count=col_count,
@@ -87,9 +91,9 @@ def save_and_ingest_dataset(
 def get_dataset_preview(db: Session, dataset_id: int) -> Dict[str, Any]:
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
-        raise ValueError("Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
-    df = pd.read_csv(dataset.file_path) if dataset.file_path.endswith(".csv") else pd.read_json(dataset.file_path)
+    df = load_dataset_dataframe(dataset)
     
     missing_counts = df.isnull().sum().to_dict()
     duplicate_count = int(df.duplicated().sum())
@@ -122,9 +126,9 @@ def clean_dataset(
     """
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
-        raise ValueError("Dataset not found")
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
-    df = pd.read_csv(dataset.file_path) if dataset.file_path.endswith(".csv") else pd.read_json(dataset.file_path)
+    df = load_dataset_dataframe(dataset)
     initial_rows = len(df)
     rejected_records = []
 
@@ -178,7 +182,8 @@ def clean_dataset(
                 df = df[~null_mask].reset_index(drop=True)
 
     # Save cleaned file back
-    cleaned_filename = f"cleaned_{dataset.filename}"
+    clean_base = extract_storage_basename(dataset.filename)
+    cleaned_filename = f"cleaned_{clean_base}"
     cleaned_path = settings.UPLOAD_DIR / cleaned_filename
     df.to_csv(cleaned_path, index=False)
 
@@ -194,7 +199,7 @@ def clean_dataset(
         db.add(r_obj)
 
     # Update dataset
-    dataset.file_path = str(cleaned_path)
+    dataset.file_path = get_storage_key(cleaned_filename)
     dataset.row_count = len(df)
     dataset.status = "Cleaned"
     
