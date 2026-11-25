@@ -418,6 +418,18 @@ export const api = {
     });
   },
 
+  demoLogin: async (email: string): Promise<AuthStatusResponse> => {
+    const res = await apiFetch<AuthStatusResponse>('/auth/demo-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    if (res.token && typeof window !== 'undefined') {
+      localStorage.setItem('rai_biz_auth_token', res.token);
+    }
+    return res;
+  },
+
   getMe: async (): Promise<AuthStatusResponse> => {
     return apiFetch('/auth/me');
   },

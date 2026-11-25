@@ -13,6 +13,9 @@ class VerifyOTPRequest(BaseModel):
 class ResendOTPRequest(BaseModel):
     email: str = Field(..., description="User's email address")
 
+class DemoLoginRequest(BaseModel):
+    email: str = Field(..., description="Predefined Hackathon Demo account email (admin@smarthire.ai or auditor@raibiz.io)")
+
 class UserResponse(BaseModel):
     id: int
     email: str

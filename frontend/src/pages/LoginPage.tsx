@@ -6,9 +6,10 @@ import { useAuth } from '../context/AuthContext';
 export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
-  const { sendOtp, isAuthenticated, setPendingEmail } = useAuth();
+  const { sendOtp, demoLogin, isAuthenticated, setPendingEmail } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -54,9 +55,24 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleQuickDemoFill = (demoEmail: string) => {
-    setEmail(demoEmail);
+  const handleDemoLogin = async (demoEmail: string) => {
     setErrorMessage('');
+    setInfoMessage('');
+    try {
+      setDemoLoading(demoEmail);
+      const res = await demoLogin(demoEmail);
+      if (res.authenticated) {
+        setInfoMessage(`Authenticated as ${res.user?.role || 'Demo User'}. Redirecting to workspace...`);
+        const from = (location.state as any)?.from?.pathname || '/';
+        navigate(from, { replace: true });
+      } else {
+        setErrorMessage(res.message || 'Demo authentication failed.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'An error occurred connecting to demo authentication service.');
+    } finally {
+      setDemoLoading(null);
+    }
   };
 
   return (
@@ -151,30 +167,73 @@ export const LoginPage: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick Demo Access Helper */}
-          <div className="mt-6 pt-5 border-t border-slate-800/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Demo Accounts (Quick Select)
+          {/* Controlled Hackathon Demo Access */}
+          <div className="mt-6 pt-5 border-t border-slate-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-teal-400 flex items-center space-x-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                <span>Hackathon Demo Access</span>
               </span>
-              <span className="text-[10px] text-teal-400 bg-teal-950/80 px-2 py-0.5 rounded border border-teal-800/50">
-                Auto-fills email
+              <span className="text-[10px] text-sky-400 bg-sky-950/80 px-2 py-0.5 rounded border border-sky-800/50 font-medium">
+                1-Click Judge Session
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Resend sandbox restricts OTP dispatch to the verified account owner. Evaluators and judges can launch isolated demo environments directly:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => handleQuickDemoFill('admin@smarthire.ai')}
-                className="py-1.5 px-2 bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md border border-slate-700/60 text-left transition truncate"
+                disabled={loading || !!demoLoading}
+                onClick={() => handleDemoLogin('admin@smarthire.ai')}
+                className="p-2.5 bg-slate-800/80 hover:bg-slate-800 border border-teal-500/30 hover:border-teal-500/60 rounded-xl text-left transition group disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
               >
-                admin@smarthire.ai
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-slate-200 group-hover:text-white flex items-center space-x-1">
+                    <span>SmartHire Admin</span>
+                  </span>
+                  <span className="text-[9px] bg-teal-950/90 text-teal-300 px-1.5 py-0.5 rounded border border-teal-700/50">
+                    SME Lead
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  {demoLoading === 'admin@smarthire.ai' ? (
+                    <span className="flex items-center text-teal-400">
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      Authenticating...
+                    </span>
+                  ) : (
+                    'admin@smarthire.ai'
+                  )}
+                </div>
               </button>
+
               <button
                 type="button"
-                onClick={() => handleQuickDemoFill('auditor@raibiz.io')}
-                className="py-1.5 px-2 bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md border border-slate-700/60 text-left transition truncate"
+                disabled={loading || !!demoLoading}
+                onClick={() => handleDemoLogin('auditor@raibiz.io')}
+                className="p-2.5 bg-slate-800/80 hover:bg-slate-800 border border-sky-500/30 hover:border-sky-500/60 rounded-xl text-left transition group disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
               >
-                auditor@raibiz.io
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-slate-200 group-hover:text-white flex items-center space-x-1">
+                    <span>Independent Auditor</span>
+                  </span>
+                  <span className="text-[9px] bg-sky-950/90 text-sky-300 px-1.5 py-0.5 rounded border border-sky-700/50">
+                    Audit View
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  {demoLoading === 'auditor@raibiz.io' ? (
+                    <span className="flex items-center text-sky-400">
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      Authenticating...
+                    </span>
+                  ) : (
+                    'auditor@raibiz.io'
+                  )}
+                </div>
               </button>
             </div>
           </div>

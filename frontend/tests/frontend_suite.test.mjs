@@ -326,4 +326,26 @@ test('Suite 7: Security & Credential Transport Validation', async (t) => {
       'api/client.ts must support Bearer token authentication header'
     );
   });
+
+  await t.test('API client provides demoLogin endpoint for Hackathon Judge Access', () => {
+    assert.ok(
+      clientContent.includes('demoLogin:') && clientContent.includes('/auth/demo-login'),
+      'api/client.ts must implement demoLogin method targeting /auth/demo-login'
+    );
+  });
+
+  await t.test('LoginPage provides clearly labelled Hackathon Demo Access options', () => {
+    const loginPagePath = path.join(frontendSrc, 'pages/LoginPage.tsx');
+    const loginContent = fs.readFileSync(loginPagePath, 'utf8');
+    assert.ok(loginContent.includes('Hackathon Demo Access'), 'LoginPage must display Hackathon Demo Access heading');
+    assert.ok(loginContent.includes('admin@smarthire.ai'), 'LoginPage must support admin@smarthire.ai demo login');
+    assert.ok(loginContent.includes('auditor@raibiz.io'), 'LoginPage must support auditor@raibiz.io demo login');
+    assert.ok(loginContent.includes('handleDemoLogin'), 'LoginPage must trigger handleDemoLogin on click');
+  });
+
+  await t.test('AuthContext exposes demoLogin handler', () => {
+    const authContextPath = path.join(frontendSrc, 'context/AuthContext.tsx');
+    const authContextContent = fs.readFileSync(authContextPath, 'utf8');
+    assert.ok(authContextContent.includes('demoLogin:'), 'AuthContext must export demoLogin method');
+  });
 });

@@ -288,8 +288,34 @@ def terminate_session(db: Session, session_token: Optional[str]):
     db.query(SessionRecord).filter(SessionRecord.session_hash == s_hash).delete()
     db.commit()
 
+HACKATHON_DEMO_ACCOUNTS: Dict[str, Dict[str, str]] = {
+    "admin@smarthire.ai": {
+        "full_name": "SmartHire Demo Administrator",
+        "user_role": "Demo Administrator",
+        "biz_role": "Owner",
+        "description": "Full SME executive & governance demonstration role"
+    },
+    "auditor@raibiz.io": {
+        "full_name": "RAI-Biz Independent Auditor",
+        "user_role": "Auditor",
+        "biz_role": "Auditor",
+        "description": "Independent auditor review & compliance verification role"
+    }
+}
+
 def get_user_primary_business(db: Session, user_id: int) -> Optional[Business]:
     """Returns the most recently created or updated primary business associated with a user."""
+    # Check if user is an official hackathon demo account
+    user = db.query(User).filter(User.id == user_id).first()
+    if user and user.email in HACKATHON_DEMO_ACCOUNTS:
+        demo_biz = db.query(Business).filter(Business.name.ilike("%SmartHire%")).first()
+        if not demo_biz:
+            from .demo_seed_service import seed_demo_data
+            seed_res = seed_demo_data(db)
+            demo_biz = db.query(Business).filter(Business.id == seed_res["business_id"]).first()
+        if demo_biz:
+            return demo_biz
+
     # First search for private businesses (id != 1) to avoid falling back to demo
     membership = (
         db.query(BusinessUser)
@@ -314,3 +340,98 @@ def get_user_primary_application(db: Session, user_id: int) -> Optional[AIApplic
     if biz:
         return db.query(AIApplication).filter(AIApplication.business_id == biz.id).order_by(AIApplication.id.desc()).first()
     return None
+
+def authenticate_demo_account(
+    db: Session,
+    email: str,
+    client_ip: Optional[str] = None
+) -> Tuple[bool, str, Optional[User], Optional[str], Optional[str]]:
+    """
+    Controlled Hackathon Demo Authenticator.
+    STRICT SECURITY CONTROLS:
+    1. Validates requested identity strictly against HACKATHON_DEMO_ACCOUNTS whitelist.
+    2. Any non-whitelisted email is rejected immediately with 403.
+    3. Scopes user strictly to the SmartHire Solutions demo workspace (Business ID 1).
+    4. Removes any unauthorized cross-tenant memberships.
+    5. Issues a standard cryptographically signed server session record.
+    Returns: (success: bool, message: str, user: Optional[User], session_token: Optional[str], csrf_token: Optional[str])
+    """
+    normalized_email = email.strip().lower()
+    if normalized_email not in HACKATHON_DEMO_ACCOUNTS:
+        return False, "Unauthorized demo identity. Demo access is strictly restricted to official hackathon demonstration accounts.", None, None, None
+
+    demo_cfg = HACKATHON_DEMO_ACCOUNTS[normalized_email]
+    now = datetime.datetime.utcnow()
+
+    # 1. Locate or seed SmartHire Demo Business
+    demo_biz = db.query(Business).filter(Business.name.ilike("%SmartHire%")).first()
+    if not demo_biz:
+        from .demo_seed_service import seed_demo_data
+        seed_res = seed_demo_data(db)
+        demo_biz = db.query(Business).filter(Business.id == seed_res["business_id"]).first()
+
+    if not demo_biz:
+        return False, "Demo workspace initialization failed.", None, None, None
+
+    # 2. Look up or create User
+    user = db.query(User).filter(User.email == normalized_email).first()
+    if not user:
+        user = User(
+            email=normalized_email,
+            full_name=demo_cfg["full_name"],
+            role=demo_cfg["user_role"],
+            is_active=True,
+            is_verified=True,
+            created_at=now,
+            last_login=now
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.full_name = demo_cfg["full_name"]
+        user.role = demo_cfg["user_role"]
+        user.is_active = True
+        user.is_verified = True
+        user.last_login = now
+        db.commit()
+
+    # 3. Ensure user's business membership is strictly scoped to the demo business
+    # Remove any foreign memberships to guarantee strict tenant isolation
+    db.query(BusinessUser).filter(
+        BusinessUser.user_id == user.id,
+        BusinessUser.business_id != demo_biz.id
+    ).delete(synchronize_session=False)
+
+    membership = db.query(BusinessUser).filter(
+        BusinessUser.user_id == user.id,
+        BusinessUser.business_id == demo_biz.id
+    ).first()
+    if not membership:
+        membership = BusinessUser(
+            user_id=user.id,
+            business_id=demo_biz.id,
+            role=demo_cfg["biz_role"]
+        )
+        db.add(membership)
+        db.commit()
+    else:
+        if membership.role != demo_cfg["biz_role"]:
+            membership.role = demo_cfg["biz_role"]
+            db.commit()
+
+    # 4. Create cryptographically secure server session
+    session_token = secrets.token_urlsafe(32)
+    session_hash = hash_token(session_token)
+    session_expires = now + datetime.timedelta(days=settings.SESSION_MAX_AGE_DAYS)
+
+    session_record = SessionRecord(
+        user_id=user.id,
+        session_hash=session_hash,
+        expires_at=session_expires,
+        created_at=now
+    )
+    db.add(session_record)
+    csrf_token = secrets.token_hex(16)
+    db.commit()
+
+    return True, f"Hackathon demo access granted ({demo_cfg['user_role']})", user, session_token, csrf_token

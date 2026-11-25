@@ -8,11 +8,11 @@ from ..database import get_db
 from ..config import settings
 from ..models import User, Business
 from ..schemas import (
-    SendOTPRequest, VerifyOTPRequest, ResendOTPRequest,
+    SendOTPRequest, VerifyOTPRequest, ResendOTPRequest, DemoLoginRequest,
     UserResponse, BusinessResponse, AIApplicationResponse, AuthStatusResponse
 )
 from ..services.auth_service import (
-    request_otp, verify_otp_and_authenticate,
+    request_otp, verify_otp_and_authenticate, authenticate_demo_account,
     validate_session, terminate_session, get_user_primary_business,
     get_user_primary_application
 )
@@ -156,6 +156,75 @@ def verify_otp_endpoint(
         raise HTTPException(status_code=400, detail=message)
 
     # Secure cookie configuration supporting both local dev and cross-site production deployments (e.g. Vercel -> Render)
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+    is_secure = is_prod or request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    cookie_samesite = "none" if is_secure else "lax"
+    max_age_seconds = settings.SESSION_MAX_AGE_DAYS * 86400
+
+    # Set HttpOnly Session Cookie
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=session_token,
+        max_age=max_age_seconds,
+        expires=max_age_seconds,
+        httponly=True,
+        samesite=cookie_samesite,
+        secure=is_secure,
+        path="/"
+    )
+
+    # Set readable CSRF Cookie for frontend protection
+    response.set_cookie(
+        key=settings.CSRF_COOKIE_NAME,
+        value=csrf_token,
+        max_age=max_age_seconds,
+        expires=max_age_seconds,
+        httponly=False,
+        samesite=cookie_samesite,
+        secure=is_secure,
+        path="/"
+    )
+
+    primary_biz = get_user_primary_business(db, user.id)
+    primary_app = get_user_primary_application(db, user.id)
+
+    return AuthStatusResponse(
+        authenticated=True,
+        user=UserResponse.from_orm(user),
+        business=BusinessResponse.from_orm(primary_biz) if primary_biz else None,
+        application=AIApplicationResponse.from_orm(primary_app) if primary_app else None,
+        csrf_token=csrf_token,
+        token=session_token,
+        message=message
+    )
+
+@router.post("/demo-login", response_model=AuthStatusResponse)
+def demo_login_endpoint(
+    req: DemoLoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """
+    Controlled Hackathon Demo Access for evaluation and judging.
+    Strictly restricted to pre-configured demo accounts (admin@smarthire.ai, auditor@raibiz.io).
+    Generates a secure server session scoped to the SmartHire demo workspace without exposing secrets or customer data.
+    """
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Please provide a valid email address.")
+
+    client_ip = get_client_ip(request)
+    success, message, user, session_token, csrf_token = authenticate_demo_account(
+        db, req.email, client_ip
+    )
+
+    if not success or not user or not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=message
+        )
+
+    # Secure cookie configuration matching verify_otp_endpoint
     is_prod = settings.ENVIRONMENT.lower() == "production"
     is_secure = is_prod or request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     cookie_samesite = "none" if is_secure else "lax"

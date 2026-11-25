@@ -12,6 +12,7 @@ interface AuthContextType {
   sendOtp: (email: string) => Promise<{ success: boolean; message: string; email: string }>;
   verifyOtp: (email: string, otp: string) => Promise<AuthStatusResponse>;
   resendOtp: (email: string) => Promise<{ success: boolean; message: string; email: string }>;
+  demoLogin: (email: string) => Promise<AuthStatusResponse>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -84,6 +85,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return res;
   };
 
+  const demoLogin = async (email: string) => {
+    const res = await api.demoLogin(email);
+    if (res.authenticated && res.user) {
+      setUser(res.user);
+      setBusiness(res.business || null);
+      setApplication(res.application || null);
+      updatePendingEmail('');
+    }
+    return res;
+  };
+
   const logout = async () => {
     try {
       await api.logout();
@@ -108,6 +120,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         sendOtp,
         verifyOtp,
         resendOtp,
+        demoLogin,
         logout,
         refreshUser
       }}
