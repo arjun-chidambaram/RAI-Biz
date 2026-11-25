@@ -216,8 +216,9 @@ export interface SampleExplanation {
   features: Record<string, any>;
   prediction: any;
   probability: number;
-  top_positive_features: { feature: string; value: any; impact: number }[];
-  top_negative_features: { feature: string; value: any; impact: number }[];
+  model_confidence?: number;
+  top_positive_features: { feature: string; value: any; impact: number; feature_display?: string }[];
+  top_negative_features: { feature: string; value: any; impact: number; feature_display?: string }[];
   plain_narrative: string;
 }
 
@@ -225,6 +226,8 @@ export interface XAIAnalysisResponse {
   model_name: string;
   task_type: string;
   model_accuracy: number;
+  accuracy_warning?: string | null;
+  prediction_disclaimer?: string | null;
   global_importance: FeatureImportanceItem[];
   sample_explanations: SampleExplanation[];
   methodology: string;

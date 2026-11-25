@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -277,15 +277,21 @@ def train_and_explain_model(
 
     global_importance.sort(key=lambda x: x["importance"], reverse=True)
 
+    # Identify categorical columns for clean feature interpretation
+    usable_cols = [c for c in df.columns if c != resolved_target and not is_identifier_or_pii(c) and (not features_to_drop or c not in features_to_drop)]
+    numeric_cols = df[usable_cols].select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = [c for c in usable_cols if c not in numeric_cols]
+
     # 2. Local Sample Explanations
     if hasattr(model, "predict_proba"):
         raw_probs = model.predict_proba(X_test)
         if raw_probs.shape[1] > 1:
-            probs = raw_probs[:, 1]
+            positive_probs = raw_probs[:, 1]
         else:
-            probs = raw_probs[:, 0] if (len(model.classes_) > 0 and model.classes_[0] == 1) else 1.0 - raw_probs[:, 0]
+            positive_probs = raw_probs[:, 0] if (len(model.classes_) > 0 and model.classes_[0] == 1) else 1.0 - raw_probs[:, 0]
     else:
-        probs = y_pred.astype(float)
+        positive_probs = y_pred.astype(float)
+        raw_probs = np.column_stack([1.0 - positive_probs, positive_probs])
 
     shap_values = None
     if SHAP_AVAILABLE:
@@ -302,13 +308,49 @@ def train_and_explain_model(
         except Exception:
             shap_values = None
 
+    def format_feature_for_display(feat_name: str, raw_val: Any) -> Tuple[str, str, str]:
+        """
+        Returns (display_feature_name, display_value, narrative_string).
+        Correctly interprets one-hot encoded categorical dummies (e.g. industry_Healthcare = 1.0)
+        and continuous numeric features.
+        """
+        matched_cat_col = None
+        for cat_col in categorical_cols:
+            prefix = f"{cat_col}_"
+            if feat_name.startswith(prefix):
+                matched_cat_col = cat_col
+                cat_val = feat_name[len(prefix):]
+                break
+
+        if matched_cat_col:
+            is_present = bool(float(raw_val) >= 0.5)
+            display_name = matched_cat_col
+            display_val = f"'{cat_val}'" if is_present else f"Not '{cat_val}'"
+            narrative_str = f"{matched_cat_col}='{cat_val}'" if is_present else f"{matched_cat_col}!='{cat_val}'"
+            return display_name, display_val, narrative_str
+
+        display_name = feat_name
+        if isinstance(raw_val, (int, float, np.number)):
+            display_val = str(round(float(raw_val), 2))
+        else:
+            display_val = str(raw_val)
+        narrative_str = f"{feat_name} ({display_val})"
+        return display_name, display_val, narrative_str
+
     sample_explanations = []
     test_indices = list(range(min(4, len(X_test))))
 
     for idx in test_indices:
         raw_row = X_test.iloc[idx].to_dict()
         pred_label = int(y_pred[idx])
-        pred_prob = round(float(probs[idx]), 3)
+
+        # Calculate model confidence strictly as the probability assigned to the predicted class
+        if raw_probs.shape[1] > pred_label:
+            model_conf = round(float(raw_probs[idx][pred_label]), 3)
+        else:
+            model_conf = round(float(positive_probs[idx]) if pred_label == 1 else float(1.0 - positive_probs[idx]), 3)
+
+        target_prob = round(float(positive_probs[idx]), 3)
 
         positive_contributors = []
         negative_contributors = []
@@ -316,10 +358,13 @@ def train_and_explain_model(
         if shap_values is not None and len(shap_values) > idx:
             row_shap = shap_values[idx]
             for feat_name, s_val in zip(feature_names, row_shap):
+                disp_feat, disp_val, narr_str = format_feature_for_display(feat_name, raw_row[feat_name])
                 val_dict = {
                     "feature": feat_name,
-                    "value": round(float(raw_row[feat_name]), 2) if isinstance(raw_row[feat_name], (int, float, np.number)) else str(raw_row[feat_name]),
-                    "impact": round(float(s_val), 3)
+                    "feature_display": disp_feat,
+                    "value": disp_val,
+                    "impact": round(float(s_val), 3),
+                    "narrative_str": narr_str
                 }
                 if s_val > 0.005:
                     positive_contributors.append(val_dict)
@@ -331,12 +376,18 @@ def train_and_explain_model(
                 val = raw_row[feat_name]
                 mean_val = float(X[feat_name].mean())
                 std_val = float(X[feat_name].std()) if float(X[feat_name].std()) > 0 else 1.0
-                diff = ((val - mean_val) / std_val) * feat_item["importance"]
+                corr = float(X_train[feat_name].corr(pd.Series(y_train))) if len(X_train) > 1 else 1.0
+                sign = -1.0 if not np.isnan(corr) and corr < 0 else 1.0
+                diff = sign * ((val - mean_val) / std_val) * feat_item["importance"]
                 impact = round(float(diff), 3)
+
+                disp_feat, disp_val, narr_str = format_feature_for_display(feat_name, val)
                 val_dict = {
                     "feature": feat_name,
-                    "value": round(float(val), 2) if isinstance(val, (int, float, np.number)) else str(val),
-                    "impact": impact
+                    "feature_display": disp_feat,
+                    "value": disp_val,
+                    "impact": impact,
+                    "narrative_str": narr_str
                 }
                 if impact > 0:
                     positive_contributors.append(val_dict)
@@ -346,39 +397,63 @@ def train_and_explain_model(
         positive_contributors.sort(key=lambda x: abs(x["impact"]), reverse=True)
         negative_contributors.sort(key=lambda x: abs(x["impact"]), reverse=True)
 
-        top_pos = [f"{p['feature']} ({p['value']})" for p in positive_contributors[:2]]
-        top_neg = [f"{n['feature']} ({n['value']})" for n in negative_contributors[:2]]
+        top_pos = [p["narrative_str"] for p in positive_contributors[:2]]
+        top_neg = [n["narrative_str"] for n in negative_contributors[:2]]
 
         narrative_parts = []
         if pred_label == 1:
-            narrative_parts.append(f"Target outcome confirmed with {pred_prob:.1%} predicted confidence.")
+            narrative_parts.append(
+                f"Model predicts target outcome (Class 1) with {model_conf:.1%} model confidence (statistical inference; not a verified ground truth outcome)."
+            )
             if top_pos:
-                narrative_parts.append(f"Primary driving factors: {', '.join(top_pos)}.")
+                narrative_parts.append(f"Primary factors supporting target prediction: {', '.join(top_pos)}.")
             if top_neg:
-                narrative_parts.append(f"Minor offsetting negative factors: {', '.join(top_neg)}.")
+                narrative_parts.append(f"Offsetting limiting factors observed: {', '.join(top_neg)}.")
         else:
-            narrative_parts.append(f"Alternative outcome predicted with {pred_prob:.1%} acceptance probability.")
+            narrative_parts.append(
+                f"Model predicts alternative outcome (Class 0) with {model_conf:.1%} model confidence (statistical inference; not a verified ground truth outcome)."
+            )
             if top_neg:
-                narrative_parts.append(f"Primary limiting factors: {', '.join(top_neg)}.")
+                narrative_parts.append(f"Primary factors driving decision away from target: {', '.join(top_neg)}.")
             if top_pos:
                 narrative_parts.append(f"Positive contributing factors observed: {', '.join(top_pos)}.")
 
+        if accuracy < 0.70:
+            narrative_parts.append(f"Caution: Model test accuracy is low ({accuracy:.1%}); feature contributions should be independently verified.")
+
         narrative = " ".join(narrative_parts)
+
+        # Strip internal helper key before serialization
+        clean_pos = [{k: v for k, v in p.items() if k != "narrative_str"} for p in positive_contributors[:3]]
+        clean_neg = [{k: v for k, v in n.items() if k != "narrative_str"} for n in negative_contributors[:3]]
 
         sample_explanations.append({
             "sample_id": int(X_test.index[idx]),
             "features": {k: (round(float(v), 2) if isinstance(v, (int, float, np.number)) else str(v)) for k, v in raw_row.items()},
             "prediction": pred_label,
-            "probability": pred_prob,
-            "top_positive_features": positive_contributors[:3],
-            "top_negative_features": negative_contributors[:3],
+            "probability": target_prob,
+            "model_confidence": model_conf,
+            "top_positive_features": clean_pos,
+            "top_negative_features": clean_neg,
             "plain_narrative": narrative
         })
+
+    accuracy_warning = None
+    if accuracy < 0.70:
+        accuracy_warning = (
+            f"Low Model Accuracy Alert ({accuracy:.1%}): Model test set accuracy is below the 70.0% reliability benchmark. "
+            "Predictions and individual feature attributions may reflect spurious correlations and should not be used as the basis for consequential automated decisions."
+        )
 
     return {
         "model_name": model.__class__.__name__,
         "task_type": "Classification & Scoring Model",
         "model_accuracy": accuracy,
+        "accuracy_warning": accuracy_warning,
+        "prediction_disclaimer": (
+            "NOTICE: Model outputs represent statistical algorithmic inferences from historical training data. "
+            "They DO NOT represent verified ground-truth facts or guaranteed real-world outcomes."
+        ),
         "global_importance": global_importance[:8],
         "sample_explanations": sample_explanations,
         "methodology": "SHAP (SHapley Additive exPlanations) Game-Theoretic Attributions and Gini Impurity Feature Importance.",

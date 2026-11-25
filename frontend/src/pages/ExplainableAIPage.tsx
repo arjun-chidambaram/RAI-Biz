@@ -245,7 +245,16 @@ export const ExplainableAIPage: React.FC = () => {
               </div>
               <div className="pl-4 border-l border-slate-200">
                 <span className="text-slate-400 block text-[10px] uppercase font-semibold">Test Set Accuracy</span>
-                <span className="font-extrabold text-emerald-600 text-sm">{(results.model_accuracy * 100).toFixed(1)}%</span>
+                <span className={`font-extrabold text-sm flex items-center gap-1.5 ${
+                  results.model_accuracy >= 0.70 ? 'text-emerald-600' : 'text-amber-600'
+                }`}>
+                  {(results.model_accuracy * 100).toFixed(1)}%
+                  {results.model_accuracy < 0.70 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-0.5">
+                      <AlertTriangle className="w-2.5 h-2.5 text-amber-600" /> LOW
+                    </span>
+                  )}
+                </span>
               </div>
               <div className="pl-4 border-l border-slate-200">
                 <span className="text-slate-400 block text-[10px] uppercase font-semibold">Attribution Engine</span>
@@ -300,6 +309,24 @@ export const ExplainableAIPage: React.FC = () => {
 
       {results && (
         <>
+          {/* Low Accuracy Prominent Warning Banner (< 70%) */}
+          {results.model_accuracy < 0.70 && (
+            <div className="bg-amber-50 border-2 border-amber-300 text-amber-950 p-4 rounded-2xl text-xs flex items-start space-x-3 shadow-xs">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-sm block mb-1 text-amber-900">
+                  Low Model Test Accuracy Warning: {(results.model_accuracy * 100).toFixed(1)}% (Below 70% Reliability Benchmark)
+                </span>
+                <p className="text-slate-700 leading-relaxed font-medium">
+                  {results.accuracy_warning || "This model's test set accuracy is below the 70.0% reliability benchmark. Predictions and SHAP feature attributions may reflect spurious correlations or underfitting. Do not rely on individual explanations for automated decisions."}
+                </p>
+                <p className="text-amber-800 text-[11px] font-semibold mt-1.5">
+                  Recommendation: Upload additional training records, verify label balance in Dataset Manager, or select more predictive feature attributes before using this model.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Global Feature Importance Chart */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
             <div className="flex items-center justify-between mb-4">
@@ -335,6 +362,7 @@ export const ExplainableAIPage: React.FC = () => {
                 {results.sample_explanations.map((sample, idx) => {
                   const isSelected = selectedCandidate?.sample_id === sample.sample_id;
                   const isPositive = sample.prediction === 1;
+                  const confidence = (sample.model_confidence ?? (isPositive ? sample.probability : 1 - sample.probability)) * 100;
 
                   return (
                     <div
@@ -357,7 +385,7 @@ export const ExplainableAIPage: React.FC = () => {
                             Record #{sample.sample_id}
                           </div>
                           <div className="text-[10px] text-slate-400">
-                            Confidence: {(sample.probability * 100).toFixed(1)}%
+                            Confidence: {confidence.toFixed(1)}%
                           </div>
                         </div>
                       </div>
@@ -365,7 +393,7 @@ export const ExplainableAIPage: React.FC = () => {
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                         isPositive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
                       }`}>
-                        {isPositive ? 'POSITIVE' : 'ALTERNATIVE'}
+                        {isPositive ? 'PRED: POSITIVE' : 'PRED: ALTERNATIVE'}
                       </span>
                     </div>
                   );
@@ -377,22 +405,57 @@ export const ExplainableAIPage: React.FC = () => {
             <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
               {selectedCandidate ? (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-3">
                     <div>
-                      <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">
-                        Detailed Decision Breakdown
-                      </span>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Record Decision Audit: #{selectedCandidate.sample_id}
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">
+                          Detailed Decision Breakdown
+                        </span>
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                          Model Inference (Not Verified Ground Truth)
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-slate-900 mt-0.5">
+                        Record Prediction &amp; Attribution Audit: #{selectedCandidate.sample_id}
                       </h3>
                     </div>
-                    <div className="text-right">
-                      <span className="text-[10px] text-slate-400 block font-medium">Model Probability</span>
-                      <span className="text-lg font-extrabold text-slate-900">
-                        {(selectedCandidate.probability * 100).toFixed(1)}%
-                      </span>
+
+                    {/* Dual Accuracy & Confidence Metric Badges */}
+                    <div className="flex items-center space-x-4 sm:text-right">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-semibold uppercase">Model Test Accuracy</span>
+                        <span className={`text-sm font-extrabold flex items-center gap-1 ${
+                          results.model_accuracy >= 0.70 ? 'text-emerald-600' : 'text-amber-600'
+                        }`}>
+                          {(results.model_accuracy * 100).toFixed(1)}%
+                          {results.model_accuracy < 0.70 && (
+                            <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                              LOW
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="pl-4 border-l border-slate-200">
+                        <span className="text-[10px] text-slate-400 block font-semibold uppercase">Prediction Confidence</span>
+                        <span className="text-lg font-extrabold text-slate-900">
+                          {((selectedCandidate.model_confidence ?? (selectedCandidate.prediction === 1 ? selectedCandidate.probability : 1 - selectedCandidate.probability)) * 100).toFixed(1)}%
+                        </span>
+                        <span className="text-[9px] text-slate-400 block">
+                          Model certainty (not accuracy)
+                        </span>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Contextual Low Accuracy Banner inside individual card if accuracy < 70% */}
+                  {results.model_accuracy < 0.70 && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center space-x-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                      <span className="text-[11px] leading-tight">
+                        <b>Caution:</b> Model test accuracy is low ({(results.model_accuracy * 100).toFixed(1)}%). Feature drivers below reflect unverified model patterns and should not be treated as empirical proof.
+                      </span>
+                    </div>
+                  )}
 
                   {/* Plain Language Reasoning Narrative */}
                   <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
@@ -416,7 +479,9 @@ export const ExplainableAIPage: React.FC = () => {
                         {selectedCandidate.top_positive_features.length > 0 ? (
                           selectedCandidate.top_positive_features.map((feat, i) => (
                             <div key={i} className="flex items-center justify-between text-[11px]">
-                              <span className="text-slate-700 font-medium">{feat.feature}: <b>{feat.value}</b></span>
+                              <span className="text-slate-700 font-medium">
+                                {feat.feature_display || feat.feature}: <b>{feat.value}</b>
+                              </span>
                               <span className="font-bold text-emerald-700">+{feat.impact.toFixed(3)}</span>
                             </div>
                           ))
@@ -436,7 +501,9 @@ export const ExplainableAIPage: React.FC = () => {
                         {selectedCandidate.top_negative_features.length > 0 ? (
                           selectedCandidate.top_negative_features.map((feat, i) => (
                             <div key={i} className="flex items-center justify-between text-[11px]">
-                              <span className="text-slate-700 font-medium">{feat.feature}: <b>{feat.value}</b></span>
+                              <span className="text-slate-700 font-medium">
+                                {feat.feature_display || feat.feature}: <b>{feat.value}</b>
+                              </span>
                               <span className="font-bold text-rose-700">{feat.impact.toFixed(3)}</span>
                             </div>
                           ))
@@ -469,11 +536,22 @@ export const ExplainableAIPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Epistemological Causality Caveat Banner */}
-          <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start space-x-3">
-            <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <b>Epistemological Correlation vs Causation Guardrail:</b> {results.correlation_causation_caveat}
+          {/* Epistemological Causality & Prediction Disclaimers */}
+          <div className="space-y-2">
+            {results.prediction_disclaimer && (
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-[11px] leading-relaxed flex items-start space-x-3">
+                <Info className="w-4 h-4 text-slate-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <b>Prediction Ground-Truth Disclaimer:</b> {results.prediction_disclaimer}
+                </div>
+              </div>
+            )}
+
+            <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start space-x-3">
+              <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <b>Epistemological Correlation vs Causation Guardrail:</b> {results.correlation_causation_caveat}
+              </div>
             </div>
           </div>
         </>

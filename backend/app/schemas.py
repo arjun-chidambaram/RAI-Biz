@@ -284,6 +284,7 @@ class SampleExplanation(BaseModel):
     features: Dict[str, Any]
     prediction: Any
     probability: float
+    model_confidence: Optional[float] = None
     top_positive_features: List[Dict[str, Any]]
     top_negative_features: List[Dict[str, Any]]
     plain_narrative: str
@@ -292,6 +293,8 @@ class XAIAnalysisResponse(BaseModel):
     model_name: str
     task_type: str
     model_accuracy: float
+    accuracy_warning: Optional[str] = None
+    prediction_disclaimer: Optional[str] = None
     global_importance: List[FeatureImportanceItem]
     sample_explanations: List[SampleExplanation]
     methodology: str

@@ -68,6 +68,20 @@ def test_explainability_analysis_success(auth_client_a: TestClient, tenant_a, db
     feat_names = [f["feature"] for f in data["global_importance"]]
     assert any(feat in ["mileage", "vehicle_age", "paint_depth_microns"] for feat in feat_names)
 
+    # Verify model confidence, disclaimers, and accuracy
+    assert "prediction_disclaimer" in data
+    assert "statistical algorithmic inferences" in data["prediction_disclaimer"]
+    assert "sample_explanations" in data
+    assert len(data["sample_explanations"]) >= 1
+
+    sample = data["sample_explanations"][0]
+    assert "model_confidence" in sample
+    assert isinstance(sample["model_confidence"], float)
+    assert 0.5 <= sample["model_confidence"] <= 1.0
+    assert "plain_narrative" in sample
+    assert "not a verified ground truth outcome" in sample["plain_narrative"]
+    assert "confirmed" not in sample["plain_narrative"].lower()
+
 def test_explainability_foreign_dataset_rejected(auth_client_a: TestClient, tenant_a, tenant_b, db: Session, tmp_path: Path):
     """Verifies Application A cannot analyze Application B's dataset."""
     app_a_id = tenant_a["application"].id
@@ -279,6 +293,20 @@ def test_explainability_categorical_features_success(auth_client_a: TestClient, 
     assert "sample_explanations" in data
     assert len(data["sample_explanations"]) >= 1
 
+    # Verify categorical dummy decoding into readable feature_display
+    sample = data["sample_explanations"][0]
+    all_contributors = sample["top_positive_features"] + sample["top_negative_features"]
+    assert len(all_contributors) >= 1
+    # Check that at least one contributor decoded department or education nicely
+    for c in all_contributors:
+        assert "feature" in c
+        assert "feature_display" in c
+        assert "impact" in c
+        assert "value" in c
+    cat_displays = [c["feature_display"] for c in all_contributors if c["feature_display"] in ["department", "education"]]
+    # Should decode prefix rather than leaving only raw dummy column name
+    assert len(cat_displays) >= 1
+
 def test_explainability_zero_variance_features_rejected(auth_client_a: TestClient, tenant_a, db: Session, tmp_path: Path):
     """Verifies dataset where all candidate features have zero variance returns clean 400."""
     app_id = tenant_a["application"].id
@@ -313,3 +341,50 @@ def test_explainability_zero_variance_features_rejected(auth_client_a: TestClien
     assert res.status_code == 400
     detail = res.json()["detail"]
     assert "zero variance" in detail.lower() or "constant values" in detail.lower()
+
+def test_explainability_low_accuracy_warning_flag():
+    """Verifies that datasets resulting in test accuracy < 70% produce an explicit accuracy_warning."""
+    from app.services.xai_service import train_and_explain_model
+
+    # Dataset with unpredictable labels
+    df_noisy = pd.DataFrame({
+        "feat_a": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "feat_b": [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        "target": [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
+    })
+    res = train_and_explain_model(df_noisy, target_column="target", model_type="LogisticRegression")
+    assert "model_accuracy" in res
+    if res["model_accuracy"] < 0.70:
+        assert res["accuracy_warning"] is not None
+        assert "Low Model Accuracy Alert" in res["accuracy_warning"]
+        assert "70.0% reliability benchmark" in res["accuracy_warning"]
+        for sample in res["sample_explanations"]:
+            assert "Caution: Model test accuracy is low" in sample["plain_narrative"]
+    else:
+        assert res["accuracy_warning"] is None
+
+def test_explainability_confidence_distinct_from_positive_probability():
+    """Verifies that model_confidence measures confidence in predicted class, not positive probability."""
+    from app.services.xai_service import train_and_explain_model
+
+    df = pd.DataFrame({
+        "score": [10, 15, 20, 25, 30, 80, 85, 90, 95, 100],
+        "target": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+    })
+    res = train_and_explain_model(df, target_column="target", model_type="RandomForest")
+    assert len(res["sample_explanations"]) >= 1
+
+    for sample in res["sample_explanations"]:
+        pred = sample["prediction"]
+        conf = sample["model_confidence"]
+        prob = sample["probability"]
+
+        # Confidence in own prediction must always be >= 0.5
+        assert conf >= 0.50
+        if pred == 1:
+            # For class 1, confidence matches probability of class 1
+            assert abs(conf - prob) < 0.05
+        else:
+            # For class 0, confidence is P(class 0) = 1 - P(class 1)
+            assert abs(conf - (1.0 - prob)) < 0.05
+
